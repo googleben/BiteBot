@@ -9,6 +9,7 @@ import com.sedmelluq.discord.lavaplayer.tools.FriendlyException;
 import com.sedmelluq.discord.lavaplayer.track.AudioPlaylist;
 import com.sedmelluq.discord.lavaplayer.track.AudioTrack;
 import com.sedmelluq.discord.lavaplayer.track.playback.AudioFrame;
+import org.apache.commons.io.IOUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import sx.blah.discord.api.events.EventSubscriber;
@@ -20,10 +21,7 @@ import sx.blah.discord.handle.obj.IUser;
 import sx.blah.discord.handle.obj.IVoiceChannel;
 import sx.blah.discord.util.MissingPermissionsException;
 
-import java.io.File;
-import java.io.FileReader;
-import java.io.IOException;
-import java.io.InputStream;
+import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -68,7 +66,7 @@ public class AudioBiteHandler {
     }
     
     private void registerFilesH() throws IOException {
-        //normalize();
+        normalize();
         bites = new HashMap<>();
         Path biteLoc = Paths.get("./bites");
         biteNames = Files.list(biteLoc).filter(p -> p.toString().endsWith(".mp3") || p.toString().endsWith(".wav"))
@@ -99,16 +97,22 @@ public class AudioBiteHandler {
     }
     
     public void normalize() {
-        ProcessBuilder pb = new ProcessBuilder("normalize.exe", "", "bites/*.wav");
+        ProcessBuilder pb = new ProcessBuilder("normalize.exe", "bites/*.wav").redirectErrorStream(true);
         File dir = new File(".");
         pb.directory(dir);
+        
         try {
             Process p = pb.start();
+            StringWriter w = new StringWriter();
+            new Thread(() -> {
+                try {
+                    IOUtils.copy(p.getInputStream(), w);
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+            }).start();
             p.waitFor();
-            InputStream i = p.getInputStream();
-            int x = 0;
-            while ((x = i.read())!=-1)
-                System.out.println((char)x);
+            System.out.println(w.toString());
         } catch (IOException | InterruptedException e) {
             e.printStackTrace();
         }
