@@ -3,14 +3,9 @@ import sx.blah.discord.api.events.EventSubscriber;
 import sx.blah.discord.handle.impl.events.guild.channel.message.MessageReceivedEvent;
 import sx.blah.discord.handle.obj.IMessage;
 
-import javax.net.ssl.HttpsURLConnection;
 import java.io.FileOutputStream;
-import java.net.MalformedURLException;
 import java.net.URL;
 import java.net.URLConnection;
-import java.nio.channels.Channels;
-import java.nio.channels.ReadableByteChannel;
-import java.nio.file.Paths;
 
 public class AudioUploader {
     
@@ -26,13 +21,13 @@ public class AudioUploader {
             e.printStackTrace();
         }
         if (a.getFilename().endsWith(".wav")) {
-            if (BenBot.commands.contains(name) || BenBot.audioBites.bites.containsKey(name)) {
+            if (BenBot.instance.commands.contains(name) || BenBot.instance.audioBites.bites.containsKey(name)) {
                 event.getChannel().sendMessage("Sorry, the name \""+name+"\" is the name of an existing bite or command. Please rename your bite.");
                 return;
             }
             if (downloadFile(a.getUrl(), a.getFilename())) {
-                BenBot.audioBites.userMap.put(name, event.getAuthor().getLongID());
-                BenBot.audioBites.registerFiles();
+                BenBot.instance.audioBites.userMap.put(name, event.getAuthor().getLongID());
+                BenBot.instance.audioBites.registerFiles();
             }
         } else {
             event.getChannel().sendMessage("Sorry, bites must be in .wav format.");
