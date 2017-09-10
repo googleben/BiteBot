@@ -112,7 +112,6 @@ public class AudioBiteHandler {
                 }
             }).start();
             p.waitFor();
-            System.out.println(w.toString());
         } catch (IOException | InterruptedException e) {
             e.printStackTrace();
         }

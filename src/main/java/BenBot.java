@@ -36,7 +36,7 @@ public class BenBot {
     public static void main(String[] args) throws IOException, ExecutionException, InterruptedException {
         GlobalScreen.addNativeKeyListener(new KeyListener());
         new BenBot();
-        
+        //YoutubeDownload.trim("OmaeWa.wav", 1, 2);
         /*Future<File> f = YoutubeDownload.download("https://www.youtube.com/watch?v=2P5qbcRAXVk", "test");
         System.out.println("a");
         File fi = f.get();

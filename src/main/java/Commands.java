@@ -6,10 +6,12 @@ import sx.blah.discord.handle.impl.obj.EmojiImpl;
 import sx.blah.discord.handle.impl.obj.Reaction;
 import sx.blah.discord.handle.obj.*;
 
+import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.*;
+import java.util.concurrent.ExecutionException;
 import java.util.stream.Collectors;
 
 public class Commands implements CommandExecutor {
@@ -170,66 +172,95 @@ public class Commands implements CommandExecutor {
         return "!voteremove";
     }
     
-    private String currentVote = null;
-    private Set<IUser> voters = null;
-    private IMessage votesCount = null;
-    private IMessage timer = null;
-    private static final int VOTES_NEEDED = 2;
+    static final int VOTES_NEEDED = 1;
     
     @Command(aliases = "voteremove", description = "Starts a vote to remove a sound bite", usage = "voteremove <bite>")
     public String voteRemoveCommand(String[] args, IUser sender, IChannel channel) {
-        if (currentVote!=null) {
-            if (args.length!=0) return "A vote is already in session!";
-            voters.add(sender);
-            votesCount.edit(voters.size()+" vote to remove \""+currentVote+"\"");
-            if (voters.size()==VOTES_NEEDED) {
-                String name = currentVote;
-                votesCount = null;
-                currentVote = null;
-                voters = null;
-                String id = BenBot.instance.audioBites.bites.get(name).getIdentifier();
-                try {
-                    Files.move(Paths.get(id), Paths.get("./bites/oldBites/"+name+id.substring(id.length()-4)));
-                    BenBot.instance.audioBites.registerFiles();
-                } catch (IOException e) {
-                    e.printStackTrace();
-                }
-        
-                return "Vote on \""+name+"\" successful.";
-            }
-            return "";
-        }
         String param = Arrays.stream(args).reduce("", (a, b) -> a+" "+b).trim();
         if (!BenBot.instance.audioBites.bites.containsKey(param)) return "No such bite \""+param+"\"";
-        currentVote = param;
-        voters = new HashSet<>();
-        voters.add(sender);
         
-        String timeMessage = "Vote on bite \""+param+"\" started. Type `!voteremove` to vote yes. Vote will end in %d minutes.";
-        timer = channel.sendMessage(String.format(timeMessage, 10));
+        String messageS = "Vote on bite `"+param+"` started. React with :arrow_up: to vote.\n"+
+                VOTES_NEEDED+" total votes required.\nVote will end in %d minutes.";
+        final IMessage message = channel.sendMessage(String.format(messageS, 10));
+        message.addReaction(":arrow_up:");
         
         new Thread(() -> {
-            try {
-                //Thread.sleep(1000*60*10);
-                for (int i = 9; i>0; i--) {
-                    Thread.sleep(1000*60);
-                    timer.edit(String.format(timeMessage, i));
+            int votes = 0;
+            int time = 0;
+            int interval = 500;
+            while (time<10*60*1000) {
+                try {
+                    Thread.sleep(interval);
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
                 }
-            } catch (InterruptedException e) {
-                e.printStackTrace();
+                time+=interval;
+                if (time%(1000*60)==0) message.edit(String.format(messageS, 10-time/(1000*60)));
+                votes = message.getReactions().get(0).getCount()-1;
+                if (votes==VOTES_NEEDED) {
+                    message.delete();
+                    String id = BenBot.instance.audioBites.bites.get(param).getIdentifier();
+                    try {
+                        Files.move(Paths.get(id), Paths.get("./bites/oldBites/"+param+id.substring(id.length()-4)));
+                        BenBot.instance.audioBites.registerFiles();
+                    } catch (IOException e) {
+                        e.printStackTrace();
+                    }
+                    channel.sendMessage("Bite `"+param+"` successfully voted off the island.");
+                }
             }
-            if (currentVote==null) return; //if vote was already successful
-            currentVote = null;
-            voters = null;
-            votesCount = null;
-            timer.delete();
-            timer = null;
-            channel.sendMessage("Vote on \""+param+"\" failed.");
+            message.delete();
+            channel.sendMessage("Vote on `"+param+"` failed.");
         }).start();
         
-        votesCount = channel.sendMessage("1 vote to remove \""+param+"\"");
+        
         
         return "";
+    }
+    
+    @Command(aliases = "dl", description = "Downloads a portion of a YouTube video as a clip", usage = "dl <link> <name> <startTime> <endTime>")
+    public String dlCommand(String c, String url, String name, String startS, String endS) {
+        if (BenBot.instance.audioBites.bites.containsKey(name)) return "There's already a bite with name `"+name+"`!";
+        int start = parseTime(startS);
+        int end = parseTime(endS);
+        if (start==-1 || end==-1) return "Format times as `s.ms`, `m:s.ms`, or `h:m:s.ms` please.";
+        if (start>=end) return "End must be later than start.";
+        if (end-start>30*1000) return "No clips longer than 30 seconds please!";
+        File f;
+        try {
+            f = YoutubeDownload.download(url, name, start, end).get();
+        } catch (InterruptedException | ExecutionException e) {
+            e.printStackTrace();
+            return "Error while downloading.";
+        }
+        f.renameTo(new File("bites/"+name+".wav"));
+        BenBot.instance.audioBites.registerFiles();
+        return "Done.";
+    }
+    
+    private int parseTime(String time) {
+        int ans = 0;
+        int mul = 1000;
+        String[] times = time.split(":");
+        if (times[times.length-1].matches(".+\\..+")) {
+            String[] sMs = times[times.length-1].split("\\.");
+            times[times.length-1] = sMs[0];
+            if (sMs[1].length()>1) sMs[1] = sMs[1].substring(0, 1);
+            try {
+                ans+=Integer.parseInt(sMs[1])*500;
+            } catch (NumberFormatException e) {
+                return -1;
+            }
+        }
+        for (int i = times.length-1; i>=0; i--) {
+            try {
+                ans+=Integer.parseInt(times[i])*mul;
+            } catch (NumberFormatException e) {
+                e.printStackTrace();
+                return -1;
+            }
+        }
+        return ans;
     }
     
 }
