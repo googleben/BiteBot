@@ -1,24 +1,22 @@
 import com.sedmelluq.discord.lavaplayer.player.AudioPlayerManager;
 import com.sedmelluq.discord.lavaplayer.player.DefaultAudioPlayerManager;
-import de.btobastian.sdcf4j.CommandHandler;
-import de.btobastian.sdcf4j.handler.Discord4JHandler;
+import discord4j.core.DiscordClient;
+import discord4j.core.DiscordClientBuilder;
+import discord4j.core.event.domain.lifecycle.ReadyEvent;
+import discord4j.core.event.domain.message.MessageCreateEvent;
+import discord4j.gateway.retry.RetryOptions;
 import org.jnativehook.GlobalScreen;
 import org.jnativehook.NativeHookException;
-import sx.blah.discord.api.ClientBuilder;
-import sx.blah.discord.api.IDiscordClient;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-import org.slf4j.*;
-
-import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Paths;
-import java.util.Arrays;
+import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Future;
 import java.util.logging.Level;
-import java.util.stream.Collectors;
 
 public class BenBot {
     
@@ -27,14 +25,13 @@ public class BenBot {
     
     public static BenBot instance;
     
-    public IDiscordClient client;
-    public CommandHandler commandHandler;
+    public DiscordClient client;
     public AudioBiteHandler audioBites;
     public AudioPlayerManager audioPlayerManager;
     public List<String> commands;
+    public CommandHandler commandHandler;
     
     public static void main(String[] args) throws IOException, ExecutionException, InterruptedException {
-        GlobalScreen.addNativeKeyListener(new KeyListener());
         new BenBot();
         //YoutubeDownload.trim("OmaeWa.wav", 1, 2);
         /*Future<File> f = YoutubeDownload.download("https://www.youtube.com/watch?v=2P5qbcRAXVk", "test");
@@ -46,34 +43,29 @@ public class BenBot {
     
     public BenBot() throws IOException {
         instance = this;
-        ClientBuilder cb = new ClientBuilder().setMaxReconnectAttempts(-1).withToken(Files.readAllLines(Paths.get("token.txt")).get(0).trim());
-        client = cb.login();
-        commandHandler = new Discord4JHandler(client);
-        commandHandler.setDefaultPrefix("!");
-        commandHandler.registerCommand(new Commands(commandHandler));
-        client.getDispatcher().registerListener(new AudioUploader());
-    
-        commands = commandHandler.getCommands().stream().map(c -> c.getCommandAnnotation().aliases()).flatMap(Arrays::stream).collect(Collectors.toList());
-    
+        DiscordClientBuilder discordClientBuilder = new DiscordClientBuilder(Files.readAllLines(Paths.get("token.txt")).get(0).trim());
+        client = discordClientBuilder.build();
+        client.getEventDispatcher().on(ReadyEvent.class).subscribe(ready -> {
+            log.info("Logged in as {}", ready.getSelf().getUsername());
+        });
+
+        commandHandler = new CommandHandler();
+        commandHandler.bind(client);
+        commandHandler.registerCommands(Commands.class);
+
+        client.getEventDispatcher().on(MessageCreateEvent.class).subscribe(AudioUploader::onMessageRecievedEvent);
+
         audioPlayerManager = new DefaultAudioPlayerManager();
-    
-        audioBites = new AudioBiteHandler();
-        client.getDispatcher().registerListener(audioBites);
-    
+
+        audioBites = new AudioBiteHandler(client);
+        client.getEventDispatcher().on(MessageCreateEvent.class).subscribe(audioBites::onMesageReveivedEvent);
+
         java.util.logging.Logger logger = java.util.logging.Logger.getLogger(GlobalScreen.class.getPackage().getName());
         logger.setLevel(Level.WARNING);
-    
+
         logger.setUseParentHandlers(false);
-    
-        try {
-            GlobalScreen.registerNativeHook();
-        }
-        catch (NativeHookException ex) {
-            System.err.println("There was a problem registering the native hook.");
-            System.err.println(ex.getMessage());
-        
-            System.exit(1);
-        }
+
+        client.login().block();
     }
 
 }

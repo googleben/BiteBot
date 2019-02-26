@@ -1,10 +1,11 @@
-import com.vdurmont.emoji.Emoji;
-import de.btobastian.sdcf4j.Command;
-import de.btobastian.sdcf4j.CommandExecutor;
-import de.btobastian.sdcf4j.CommandHandler;
-import sx.blah.discord.handle.impl.obj.EmojiImpl;
-import sx.blah.discord.handle.impl.obj.Reaction;
-import sx.blah.discord.handle.obj.*;
+import discord4j.core.DiscordClient;
+import discord4j.core.object.entity.Channel;
+import discord4j.core.object.entity.Message;
+import discord4j.core.object.entity.MessageChannel;
+import discord4j.core.object.entity.User;
+import discord4j.core.object.reaction.Reaction;
+import discord4j.core.object.reaction.ReactionEmoji;
+import discord4j.core.object.util.Snowflake;
 
 import java.io.File;
 import java.io.IOException;
@@ -14,25 +15,19 @@ import java.util.*;
 import java.util.concurrent.ExecutionException;
 import java.util.stream.Collectors;
 
-public class Commands implements CommandExecutor {
-    
-    private final CommandHandler commandHandler;
-    
-    public Commands(CommandHandler commandHandler) {
-        this.commandHandler = commandHandler;
-    }
+public class Commands {
     
     @Command(aliases = "help", description = "Shows the help page")
-    public String helpCommand(IMessage message) {
-        String command = message.getContent();
+    public static String helpCommand(Message message) {
+        String command = message.getContent().get();
         if (command.trim().equals("!help")) return helpPage();
         command = command.substring(6);
         return helpSingleCommand(command);
     }
     
-    private String helpSingleCommand(String command) {
-        CommandHandler.SimpleCommand c = commandHandler.getCommands().stream()
-                .filter(x -> Arrays.stream(x.getCommandAnnotation().aliases()).filter(s -> s.equals(command)).count()>0)
+    private static String helpSingleCommand(String command) {
+        CommandInfo c = BenBot.instance.commandHandler.getCommands().stream()
+                .filter(x -> Arrays.asList(x.annotation.aliases()).contains(command))
                 .findAny().orElse(null);
         if (c==null) {
             if (BenBot.instance.audioBites.bites.containsKey(command)) {
@@ -42,12 +37,12 @@ public class Commands implements CommandExecutor {
         return "Command \"" + command + "\" not found.";
     }
     
-    private String helpPage() {
+    private static String helpPage() {
         StringBuilder ans = new StringBuilder();
         ans.append("```\n");
         ans.append("!<bite> | Plays a sound bite");
-        for (CommandHandler.SimpleCommand command : commandHandler.getCommands()) {
-            if (!command.getCommandAnnotation().showInHelpPage()) {
+        for (CommandInfo command : BenBot.instance.commandHandler.getCommands()) {
+            if (!command.annotation.showInHelpPage()) {
                 continue;
             }
             ans.append("\n");
@@ -57,17 +52,16 @@ public class Commands implements CommandExecutor {
         return ans.toString();
     }
     
-    private String getHelpText(CommandHandler.SimpleCommand command) {
+    private static String getHelpText(CommandInfo command) {
         String ans = "";
-        if (!command.getCommandAnnotation().requiresMention()) {
-            ans+=commandHandler.getDefaultPrefix();
-        }
-        String usage = command.getCommandAnnotation().usage();
+        CommandHandler commandHandler = BenBot.instance.commandHandler;
+        ans+=commandHandler.getPrefix();
+        String usage = command.annotation.usage();
         if (usage.isEmpty()) {
-            usage = command.getCommandAnnotation().aliases()[0];
+            usage = command.annotation.aliases()[0];
         }
         ans+=usage;
-        String description = command.getCommandAnnotation().description();
+        String description = command.annotation.description();
         if (!description.equals("none")) {
             ans+=" | "+description;
         }
@@ -75,19 +69,19 @@ public class Commands implements CommandExecutor {
     }
     
     @Command(aliases = "ping", description="Pong")
-    public String pingCommand() {
+    public static String pingCommand() {
         return "Pong!";
     }
     
     @Command(aliases = "link", description = "Sends the link to add this bot to a server")
-    public String linkCommand() {
+    public static String linkCommand() {
         return "https://discordapp.com/oauth2/authorize?client_id=168940312499060736&scope=bot&permissions=2146958591";
     }
     
-    final int PER_PAGE = 50;
+    private final static int PER_PAGE = 50;
     
     @Command(aliases = {"list", "List"}, description = "Lists all sound bites available")
-    public String listCommand(IChannel channel, IUser user) {
+    public static String listCommand(MessageChannel channel, User user) {
         new Thread(() -> {
             List<String> bites = new ArrayList<>(BenBot.instance.audioBites.bites.keySet());
             List<List<String>> pages = new ArrayList<>();
@@ -97,58 +91,70 @@ public class Commands implements CommandExecutor {
             }
             int page = 0;
             int pagen = pages.size();
-            IMessage message = channel.sendMessage(buildList(pages.get(0), 0, pagen));
+            Message message = channel.createMessage(buildList(pages.get(0), 0, pagen)).block();
     
-            message.addReaction(":arrow_left:");
+            message.addReaction(ReactionEmoji.unicode("◀")).block();
             try {
                 Thread.sleep(250);
             } catch (InterruptedException e) {
                 e.printStackTrace();
             }
-            message.addReaction(":arrow_right:");
+            message.addReaction(ReactionEmoji.unicode("▶")).block();
             try {
                 Thread.sleep(250);
             } catch (InterruptedException e) {
                 e.printStackTrace();
             }
-            message.addReaction(":wastebasket:");
+            message.addReaction(ReactionEmoji.unicode("\uD83D\uDDD1")).block();
     
             int time = 0;
             int interval = 500;
+            Snowflake channelId = message.getChannelId();
+            Snowflake messageId = message.getId();
             while (time<1000*60) {
                 try {
                     Thread.sleep(interval);
                 } catch (InterruptedException e) {
-                    message.delete();
+                    message.delete().block();
                     return;
                 }
-                for (IReaction r : message.getReactions()) {
-                    if (r.getUnicodeEmoji().getDescription().equals("wastebasket") && r.getUserReacted(user)) {
-                        message.delete();
+                message = BenBot.instance.client.getMessageById(channelId, messageId).block();
+                for (Reaction r : message.getReactions()) {
+                    if (r.getCount() < 2) continue;
+                    try {
+                        if (!r.getEmoji().asUnicodeEmoji().isPresent()) continue;
+                        r.getEmoji().asUnicodeEmoji().get();
+                    } catch (Exception e) {
+                        continue;
+                    }
+                    if (r.getEmoji().asUnicodeEmoji().get().getRaw().equals("\uD83D\uDDD1")) {
+                        message.delete().block();
                         return;
                     }
-                    if (r.getUnicodeEmoji().getDescription().equals("leftwards black arrow") && r.getUserReacted(user)) {
-                        message.removeReaction(user, r);
+                    if (r.getEmoji().asUnicodeEmoji().get().getRaw().equals("◀")) {
+                        message.removeReaction(r.getEmoji(), user.getId()).block();
                         if (page==0) continue;
                         page--;
-                        message.edit(buildList(pages.get(page), page, pagen));
+                        int finalPage = page;
+                        message.edit(spec -> spec.setContent(buildList(pages.get(finalPage), finalPage, pagen))).block();
                     }
-                    if (r.getUnicodeEmoji().getDescription().equals("black rightwards arrow") && r.getUserReacted(user)) {
-                        message.removeReaction(user, r);
+                    if (r.getEmoji().asUnicodeEmoji().get().getRaw().equals("▶")) {
+                        message.removeReaction(r.getEmoji(), user.getId()).block();
                         if (page==pagen-1) continue;
                         page++;
-                        message.edit(buildList(pages.get(page), page, pagen));
+                        int finalPage = page;
+                        message.edit(spec -> spec.setContent(buildList(pages.get(finalPage), finalPage, pagen))).block();
                     }
                 }
                 time+=interval;
             }
-            message.delete();
+            message.delete().block();
         }).start();
         return "";
         //return "```"+BenBot.audioBites.bites.keySet().stream().reduce("",(a, b) -> a+" "+b).substring(1)+"```";
     }
     
-    private String buildList(List<String> names, int page, int pages) {
+    private static String buildList(List<String> names, int page, int pages) {
         StringBuilder ans = new StringBuilder();
         ans.append(String.format("**Page %d of %d**\n", page+1, pages));
         ans.append("```\n");
@@ -162,27 +168,27 @@ public class Commands implements CommandExecutor {
     }
     
     @Command(aliases = "reload", description = "Reloads list of sound bites")
-    public void reloadCommand(IMessage message) {
+    public static void reloadCommand(Message message) {
         BenBot.instance.audioBites.registerFiles();
-        message.delete();
+        message.delete().block();
     }
     
     @Command(aliases = "rem", showInHelpPage = false)
-    public String rem() {
+    public static String rem() {
         return "!voteremove";
     }
     
     static final int VOTES_NEEDED = 1;
     
     @Command(aliases = "voteremove", description = "Starts a vote to remove a sound bite", usage = "voteremove <bite>")
-    public String voteRemoveCommand(String[] args, IUser sender, IChannel channel) {
+    public static String voteRemoveCommand(String[] args, User sender, MessageChannel channel) {
         String param = Arrays.stream(args).reduce("", (a, b) -> a+" "+b).trim();
         if (!BenBot.instance.audioBites.bites.containsKey(param)) return "No such bite \""+param+"\"";
         
         String messageS = "Vote on bite `"+param+"` started. React with :arrow_up: to vote.\n"+
                 VOTES_NEEDED+" total votes required.\nVote will end in %d minutes.";
-        final IMessage message = channel.sendMessage(String.format(messageS, 10));
-        message.addReaction(":arrow_up:");
+        final Message message = channel.createMessage(String.format(messageS, 10)).block();
+        message.addReaction(ReactionEmoji.unicode("⬆")).block();
         
         new Thread(() -> {
             int votes = 0;
@@ -195,8 +201,11 @@ public class Commands implements CommandExecutor {
                     e.printStackTrace();
                 }
                 time+=interval;
-                if (time%(1000*60)==0) message.edit(String.format(messageS, 10-time/(1000*60)));
-                votes = message.getReactions().get(0).getCount()-1;
+                if (time%(1000*60)==0) {
+                    int finalTime = time;
+                    message.edit(spec -> spec.setContent(String.format(messageS, 10- finalTime /(1000*60)))).block();
+                }
+                votes = message.getReactions().toArray(new Reaction[0])[0].getCount()-1;
                 if (votes==VOTES_NEEDED) {
                     message.delete();
                     String id = BenBot.instance.audioBites.bites.get(param).getIdentifier();
@@ -206,11 +215,11 @@ public class Commands implements CommandExecutor {
                     } catch (IOException e) {
                         e.printStackTrace();
                     }
-                    channel.sendMessage("Bite `"+param+"` successfully voted off the island.");
+                    channel.createMessage("Bite `"+param+"` successfully voted off the island.").block();
                 }
             }
-            message.delete();
-            channel.sendMessage("Vote on `"+param+"` failed.");
+            message.delete().block();
+            channel.createMessage("Vote on `"+param+"` failed.").block();
         }).start();
         
         
@@ -219,7 +228,7 @@ public class Commands implements CommandExecutor {
     }
     
     @Command(aliases = "dl", description = "Downloads a portion of a YouTube video as a clip", usage = "dl <link> <name> <startTime> <endTime>")
-    public String dlCommand(String c, String url, String name, String startS, String endS) {
+    public static String dlCommand(String c, String url, String name, String startS, String endS) {
         if (BenBot.instance.audioBites.bites.containsKey(name)) return "There's already a bite with name `"+name+"`!";
         int start = parseTime(startS);
         int end = parseTime(endS);
@@ -238,7 +247,7 @@ public class Commands implements CommandExecutor {
         return "Done.";
     }
     
-    private int parseTime(String time) {
+    private static int parseTime(String time) {
         int ans = 0;
         int mul = 1000;
         String[] times = time.split(":");

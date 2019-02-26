@@ -1,6 +1,7 @@
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.reflect.TypeToken;
+import com.sedmelluq.discord.lavaplayer.format.StandardAudioDataFormats;
 import com.sedmelluq.discord.lavaplayer.player.AudioLoadResultHandler;
 import com.sedmelluq.discord.lavaplayer.player.AudioPlayer;
 import com.sedmelluq.discord.lavaplayer.player.event.TrackEndEvent;
@@ -9,19 +10,22 @@ import com.sedmelluq.discord.lavaplayer.tools.FriendlyException;
 import com.sedmelluq.discord.lavaplayer.track.AudioPlaylist;
 import com.sedmelluq.discord.lavaplayer.track.AudioTrack;
 import com.sedmelluq.discord.lavaplayer.track.playback.AudioFrame;
+import com.sedmelluq.discord.lavaplayer.track.playback.MutableAudioFrame;
+import discord4j.core.DiscordClient;
+import discord4j.core.event.domain.message.MessageCreateEvent;
+import discord4j.core.object.VoiceState;
+import discord4j.core.object.entity.Guild;
+import discord4j.core.object.entity.User;
+import discord4j.core.object.entity.VoiceChannel;
+import discord4j.core.spec.VoiceChannelJoinSpec;
+import discord4j.voice.AudioProvider;
+import discord4j.voice.VoiceConnection;
 import org.apache.commons.io.IOUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import sx.blah.discord.api.events.EventSubscriber;
-import sx.blah.discord.handle.audio.AudioEncodingType;
-import sx.blah.discord.handle.audio.IAudioProvider;
-import sx.blah.discord.handle.impl.events.guild.channel.message.MessageReceivedEvent;
-import sx.blah.discord.handle.obj.IGuild;
-import sx.blah.discord.handle.obj.IUser;
-import sx.blah.discord.handle.obj.IVoiceChannel;
-import sx.blah.discord.util.MissingPermissionsException;
 
 import java.io.*;
+import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -35,7 +39,7 @@ public class AudioBiteHandler {
     
     public HashMap<String, AudioTrack> bites;
     
-    public Set<IGuild> playingIn;
+    public Set<Guild> playingIn;
     
     public HashMap<String, Long> userMap;
     
@@ -43,13 +47,14 @@ public class AudioBiteHandler {
     
     public Set<String> biteNames;
     
-    public AudioBiteHandler() {
+    public AudioBiteHandler(DiscordClient client) {
+        client.getEventDispatcher().on(MessageCreateEvent.class).subscribe(this::onMesageReveivedEvent);
         AudioSourceManagers.registerLocalSource(BenBot.instance.audioPlayerManager);
         registerFiles();
         playingIn = new HashSet<>();
         try {
             userMap = gson.fromJson(new FileReader("./data/bites.json"), new TypeToken<HashMap<String,Long>>(){}.getType());
-        } catch (IOException e) {
+        } catch (Exception e) {
             e.printStackTrace();
         }
         if (userMap==null) userMap = new HashMap<>();
@@ -68,12 +73,15 @@ public class AudioBiteHandler {
     private void registerFilesH() throws IOException {
         normalize();
         bites = new HashMap<>();
+        ArrayList<String> arr = new ArrayList<>();
+        BenBot.instance.commands = arr;
         Path biteLoc = Paths.get("./bites");
         biteNames = Files.list(biteLoc).filter(p -> p.toString().endsWith(".mp3") || p.toString().endsWith(".wav"))
                 .map(p -> {
                    String ans = p.getFileName().toString();
                    return ans.substring(0, ans.length()-4);
                 }).collect(Collectors.toSet());
+        arr.addAll(biteNames);
         Files.list(biteLoc).filter(p -> p.toString().endsWith(".mp3") || p.toString().endsWith(".wav")).forEach(this::load);
         Set<String> missing = missing();
         System.out.println(missing);
@@ -116,55 +124,62 @@ public class AudioBiteHandler {
             e.printStackTrace();
         }
     }
-    
-    @EventSubscriber
-    public void onMesageReveivedEvent(MessageReceivedEvent event) {
-        String message = event.getMessage().getContent();
+
+    public void onMesageReveivedEvent(MessageCreateEvent event) {
+        if (!event.getMessage().getContent().isPresent()) return;
+        String message = event.getMessage().getContent().get();
         if (!message.startsWith("!")) return;
         String name = message.substring(1);
         if (bites.containsKey(name)) {
             try {
-                event.getMessage().delete();
-            } catch (MissingPermissionsException e) {
-                log.debug("Insufficient permissions to delete message");
+                event.getMessage().delete().block();
+            } catch (Exception e) {
+                log.error("Error deleting message: {}", e);
             }
-            IGuild guild = event.getGuild();
+            Guild guild = event.getGuild().block();
             if (playingIn.contains(guild)) return;
-            IVoiceChannel channel = event.getAuthor().getVoiceStateForGuild(guild).getChannel();
+            VoiceChannel channel = event.getMember().get().getVoiceState().block().getChannel().block();
             playAudio(name, guild, channel);
         }
     }
     
-    public void playAudio(String name, IGuild guild, IVoiceChannel channel) {
+    public void playAudio(String name, Guild guild, VoiceChannel channel) {
         playingIn.add(guild);
-        if (channel.isConnected()) channel.leave();
-        channel.join();
+        //if (guild.getClient().) channel.leave();
         AudioPlayer player = BenBot.instance.audioPlayerManager.createPlayer();
         AudioSender sender = new AudioSender(player);
+        VoiceConnection[] vc = new VoiceConnection[] {null};
         player.addListener(p -> {
             if (p instanceof TrackEndEvent) {
                 p.player.destroy();
                 sender.done = true;
-                channel.leave();
+                vc[0].disconnect();
                 playingIn.remove(guild);
             }
         });
-        guild.getAudioManager().setAudioProvider(sender);
+        VoiceConnection c = channel.join(spec -> {
+            spec.setProvider(sender);
+        }).block();
+        vc[0] = c;
+
+        //guild.getAudioManager().setAudioProvider(sender);
         bites.put(name, bites.get(name).makeClone());
         player.playTrack(bites.get(name));
     }
     
-    public void playAudio(String name, IUser user) {
-        for (IGuild guild : BenBot.instance.client.getGuilds()) {
-            if (user.getVoiceStateForGuild(guild).getChannel()!=null) {
-                playAudio(name, guild, user.getVoiceStateForGuild(guild).getChannel());
+    public void playAudio(String name) {
+        User user = BenBot.instance.client.getSelf().block();
+        for (Guild guild : BenBot.instance.client.getGuilds().toIterable()) {
+            VoiceState v = guild.getVoiceStates().filter(a -> a.getUser().block().equals(user)).blockFirst();
+            if (v != null) {
+                playAudio(name, guild, v.getChannel().block());
             }
         }
     }
     
-    public void playAudio(String name) {
-        playAudio(name, BenBot.instance.client.getUserByID(66312966248607744L));
-    }
+//    public void playAudio(String name) {
+//        playAudio(name, BenBot.instance.client.getUserByID(66312966248607744L));
+//    }
     
     class AudioLoadHandler implements AudioLoadResultHandler {
         
@@ -188,29 +203,21 @@ public class AudioBiteHandler {
         }
     }
     
-    class AudioSender implements IAudioProvider {
+    class AudioSender extends AudioProvider {
         private AudioPlayer player;
-        private AudioFrame lastFrame;
+        private MutableAudioFrame frame = new MutableAudioFrame();
         boolean done = false;
         public AudioSender(AudioPlayer player) {
+            super(ByteBuffer.allocate(StandardAudioDataFormats.DISCORD_OPUS.maximumChunkSize()));
             this.player = player;
+            this.frame.setBuffer(getBuffer());
         }
     
         @Override
-        public boolean isReady() {
-            if (done) return true;
-            lastFrame = player.provide();
-            return lastFrame!=null;
-        }
-    
-        @Override
-        public byte[] provide() {
-            return lastFrame.data;
-        }
-        
-        @Override
-        public AudioEncodingType getAudioEncodingType() {
-            return AudioEncodingType.OPUS;
+        public boolean provide() {
+            boolean didProvide = player.provide(frame);
+            if (didProvide) getBuffer().flip();
+            return didProvide;
         }
     }
     

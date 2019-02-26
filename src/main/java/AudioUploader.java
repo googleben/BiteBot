@@ -1,19 +1,18 @@
+import discord4j.core.event.domain.message.MessageCreateEvent;
+import discord4j.core.object.entity.Attachment;
+import discord4j.core.object.entity.Message;
 import org.apache.commons.io.IOUtils;
-import sx.blah.discord.api.events.EventSubscriber;
-import sx.blah.discord.handle.impl.events.guild.channel.message.MessageReceivedEvent;
-import sx.blah.discord.handle.obj.IMessage;
 
 import java.io.FileOutputStream;
 import java.net.URL;
 import java.net.URLConnection;
 
 public class AudioUploader {
-    
-    @EventSubscriber
-    public void onMessageRecievedEvent(MessageReceivedEvent event) {
-        if (!event.getChannel().isPrivate()) return;
+
+    public static void onMessageRecievedEvent(MessageCreateEvent event) {
+        //if (!event.getMessage().getChannel.getValue().isPrivate()) return;
         BenBot.log.debug("event");
-        IMessage.Attachment a = event.getMessage().getAttachments().get(0);
+        Attachment a = event.getMessage().getAttachments().toArray(new Attachment[0])[0];
         String name = a.getFilename().substring(0, a.getFilename().length()-4);
         try {
             Thread.sleep(1000);
@@ -22,15 +21,15 @@ public class AudioUploader {
         }
         if (a.getFilename().endsWith(".wav")) {
             if (BenBot.instance.commands.contains(name) || BenBot.instance.audioBites.bites.containsKey(name)) {
-                event.getChannel().sendMessage("Sorry, the name \""+name+"\" is the name of an existing bite or command. Please rename your bite.");
+                event.getMessage().getChannel().block().createMessage("Sorry, the name \""+name+"\" is the name of an existing bite or command. Please rename your bite.").block();
                 return;
             }
             if (downloadFile(a.getUrl(), a.getFilename())) {
-                BenBot.instance.audioBites.userMap.put(name, event.getAuthor().getLongID());
+                BenBot.instance.audioBites.userMap.put(name, event.getMessage().getAuthor().get().getId().asLong());
                 BenBot.instance.audioBites.registerFiles();
             }
         } else {
-            event.getChannel().sendMessage("Sorry, bites must be in .wav format.");
+            event.getMessage().getChannel().block().createMessage("Sorry, bites must be in .wav format.").block();
         }
         
     }
